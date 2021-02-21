@@ -1,0 +1,112 @@
+trigger:
+- master
+ 
+pool:
+  vmImage: 'ubuntu-latest'
+ 
+# Set variables once
+variables:
+- name: isDashboard
+  value: n
+
+stages:
+    - stage: A
+      jobs:
+      - job: RunTest
+        steps:
+        - task: CmdLine@2
+          displayName: 'Before Installation'
+          inputs:
+            script: |
+              echo "==========Before Installation======="
+                    ls -lrt
+                    echo "##vso[task.setvariable variable=doThing;isSecret=true]Yes"
+        - task: JMeterInstaller@0
+          displayName: 'install jemter'
+          inputs:
+            jmeterVersion: '5.2.1'
+
+        - task: CmdLine@2
+          displayName: 'install bzt'
+          inputs:
+            script: |
+              python3 -m pip install --upgrade wheel setuptools Cython
+              python3 -m pip install bzt
+              sudo cp /home/vsts/.local/bin/bzt /usr/local/bin/bzt
+              sudo ls -lrt /usr/local/bin/bzt
+              echo "doThing=$(doThing)"
+
+        - task: TaurusInstaller@0
+          inputs:
+            taurusVersion: '1.15.2'
+            pythonCommand: 'python3'
+
+
+        - task: TaurusRunner@0
+          displayName: 'Run'
+          inputs:
+            taurusConfig: |
+              execution:
+              - scenario:
+                  script: website_perf.jmx
+              reporting:
+              - module: junit-xml
+                filename: TEST-Taurus.xml
+                data-source: sample-labels
+            jmeterHome: '$(JMeterInstaller.JMeterHome)'
+            jmeterPath: '$(JMeterInstaller.JMeterPath)'
+            jmeterVersion: '$(JMeterInstaller.JMeterVersion)'
+            outputDir: 'taurus-output'
+
+        - task: PublishTestResults@2
+          displayName: Publish jmeter-junit report
+          condition: always()
+          inputs:
+            testResultsFormat: 'JUnit'
+            testResultsFiles: 'TEST-Taurus.xml'
+      
+      - job: VerifyReportFolder
+        dependsOn: RunTest
+        condition: always()
+        steps:
+        - task: CmdLine@2
+          displayName: 'Output Folder'
+          inputs:
+            script: |
+                echo "doThing=$(doThing)"
+                ls -l taurus-output/report
+
+
+      - job: Dashboard
+        dependsOn: VerifyReportFolder
+        steps:
+        - task: publishhtmlreport@1
+          displayName: Publish jmeter Dashboard   
+          inputs:
+            htmlType: 'Jmeter'
+            JmeterReportsPath: '$(Build.SourcesDirectory)/taurus-output/report'
+
+        # - task: PublishBuildArtifacts@1
+        #   inputs:
+        #     PathtoPublish: '$(Build.SourcesDirectory)/taurus-output'
+        #     ArtifactName: 'drop1'
+        #     publishLocation: 'Container'
+        #   displayName: Publish jmeter Dashboard
+
+        # - task: CmdLine@2
+        #   displayName: Run jmeter
+        #   inputs:
+        #     script: |
+        #       jmeter -v
+        #       echo "==========Before Run======="
+        #       ls -lrt
+              
+        #       docker run -e HEAP='-Xms4g -Xmx4g' --volume `pwd`:/jmeter egaillardon/jmeter:5.1.1-2.0.0 --nongui --testfile website_perf.jmx --logfile testoutput.jtl
+              
+        #       docker run --volume `pwd`:/jmeter egaillardon/jmeter:5.1.1-2.0.0 --reportonly testoutput.jtl --reportoutputfolder /jmeter/LoadReports
+              
+        #       echo "==========After Run======="
+        #       ls -lrt
+        #       cd $(Build.SourcesDirectory)/LoadReports
+        #       pwd
+        #       ls -lrt 
